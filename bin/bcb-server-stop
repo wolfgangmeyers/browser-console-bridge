@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SESSION_NAME="bcb-server"
+
+if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+    tmux kill-session -t "$SESSION_NAME"
+    echo "Server session '$SESSION_NAME' stopped"
+else
+    echo "No server session '$SESSION_NAME' found"
+fi

@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SESSION_NAME="bcb-server"
+
+if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+    tmux kill-session -t "$SESSION_NAME"
+    echo "Killed existing session"
+    sleep 1
+fi
+
+exec "$SCRIPT_DIR/bcb-server-start"
