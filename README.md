@@ -59,10 +59,18 @@ The server runs in a tmux session named `bcb-server`. Use `bin/bcb-server-stop` 
 Symlink the skill directory so Claude Code can use it:
 
 ```bash
-ln -s "$(pwd)/skill" ~/.claude/skills/browser-console
+ln -s "$(pwd)/.claude/skills/browser-console" ~/.claude/skills/browser-console
 ```
 
 Then invoke it in Claude Code with `/browser-console`.
+
+**Or use the install skill** to do steps 1–5 automatically. From Claude Code in this repo's directory:
+
+```
+/install
+```
+
+This sets up the venv, symlinks the skill, and starts the server. Loading the Chrome extension is the one step that must be done manually.
 
 ## How It Works
 
@@ -81,12 +89,12 @@ Four small components pass messages along a chain:
 
 ```
 browser-console-bridge/
-  extension/          # Chrome extension (manifest.json, background.js, content.js)
-  server/             # Python HTTP server (message broker)
-  cli/                # CLI tools (stdlib only)
-  bin/                # Server lifecycle scripts (tmux)
-  skill/              # Claude Code skill definition
-  docs/               # Design documents
+  .claude/skills/browser-console/  # Claude Code skill definition (SKILL.md)
+  extension/                        # Chrome extension (manifest.json, background.js, content.js)
+  server/                           # Python HTTP server (message broker)
+  cli/                              # CLI tools (stdlib only)
+  bin/                              # Server lifecycle scripts (tmux)
+  docs/                             # Design documents
 ```
 
 ## Design Documents
