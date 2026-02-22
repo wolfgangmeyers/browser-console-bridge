@@ -7,6 +7,13 @@ description: Execute JavaScript in the active browser tab, read console output, 
 
 Execute JavaScript in the browser and read console output through a local bridge server. The bridge connects a Python HTTP server (running in tmux) with a Chrome extension that has access to the page context.
 
+**Prefer BCB over Playwright** for any interactive browser testing. BCB works against the real logged-in browser session with no setup. If Chrome isn't open, launch it:
+
+```bash
+/opt/google/chrome/chrome --new-window "https://example.com" &
+sleep 3 && curl -sf http://localhost:18080/health | python3 -m json.tool
+```
+
 ## Prerequisites
 
 The BCB Python server must be running in a tmux session, and the Chrome extension must be installed and active.
@@ -29,12 +36,10 @@ Look for `"extension_connected": true` in the output. If the server is unreachab
 ## Starting the Server (if not running)
 
 ```bash
-# Check if already running in tmux
-tmux has-session -t bcb-server 2>/dev/null && echo "Already running" || \
-  tmux new-session -d -s bcb-server "python3 $(dirname $(realpath $0))/../server/main.py"
+bash ~/code/browser-console-bridge/bin/bcb-server-start
+sleep 2
+curl -sf http://localhost:18080/health | python3 -m json.tool
 ```
-
-Wait a second after starting, then verify with the health check above.
 
 ## Executing JavaScript
 
@@ -76,6 +81,35 @@ python3 -m cli.bcb_tabs
 
 # As JSON
 python3 -m cli.bcb_tabs --json
+```
+
+## Targeting a Specific Tab
+
+All commands accept `--tab TAB_ID` to target a tab other than the active one. Get tab IDs from `bcb_tabs`.
+
+```bash
+# Execute JS in a specific tab
+python3 -m cli.bcb_exec --tab 1729111934 'window.location.href'
+
+# Screenshot a specific tab
+python3 -m cli.bcb_screenshot --tab 1729111934 --output /tmp/tab1.png
+```
+
+## Opening New Tabs (for parallel agent testing)
+
+When multiple agents need to work in parallel, open a dedicated tab for each so they don't interfere with each other's navigation:
+
+```bash
+# Open N new tabs from the currently active tab (replace URL as needed)
+python3 -m cli.bcb_exec 'Array.from({length: 2}, () => window.open("https://example.com", "_blank") && "opened")'
+
+# Wait for tabs to load, then list them to get their IDs
+sleep 2
+python3 -m cli.bcb_tabs
+
+# Each agent then uses its assigned tab ID for all commands
+python3 -m cli.bcb_exec --tab <TAB_ID_1> '...'
+python3 -m cli.bcb_screenshot --tab <TAB_ID_2> --output /tmp/agent2.png
 ```
 
 ## Taking Screenshots
