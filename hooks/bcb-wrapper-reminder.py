@@ -92,8 +92,14 @@ def main():
     if recent_bcb_count > 0:
         sys.exit(0)
 
-    # First bcb call in recent history — print the reminder
-    print(REMINDER)
+    # First bcb call in recent history — inject the reminder
+    output = {
+        "hookSpecificOutput": {
+            "hookEventName": "PostToolUse",
+            "additionalContext": REMINDER,
+        }
+    }
+    print(json.dumps(output))
     sys.exit(0)
 
 

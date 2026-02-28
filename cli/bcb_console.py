@@ -37,6 +37,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, default=100, help="Max entries (default: 100)")
     parser.add_argument("--tab", type=int, default=None, dest="tab_id", help="Target tab ID")
     parser.add_argument("--json", action="store_true", dest="as_json", help="Output raw JSON")
+    parser.add_argument("--clear", action="store_true", help="Clear the console buffer")
     args = parser.parse_args(argv)
 
     levels = [l.strip() for l in args.levels.split(",")] if args.levels else None
@@ -44,6 +45,13 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         client = BcbClient()
+        if args.clear:
+            result = client.clear_console(tab_id=args.tab_id)
+            if not result.get("success"):
+                print(result.get("error", "unknown error"), file=sys.stderr)
+                return 1
+            print("Console buffer cleared.")
+            return 0
         result = client.read_console(
             tab_id=args.tab_id, since=since, levels=levels,
             limit=args.limit,

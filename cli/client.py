@@ -49,6 +49,9 @@ class BcbClient:
             cmd["levels"] = levels
         return self.send_command(cmd, timeout=timeout)
 
+    def clear_console(self, tab_id: int | None = None, timeout: float = 10) -> dict:
+        return self.send_command({"type": "clear_console", "tab_id": tab_id}, timeout=timeout)
+
     def list_tabs(self, timeout: float = 10) -> dict:
         return self.send_command({"type": "list_tabs"}, timeout=timeout)
 

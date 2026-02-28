@@ -119,6 +119,9 @@ async function handleCommand(msg) {
       case 'read_console':
         result = await handleReadConsole(msg);
         break;
+      case 'clear_console':
+        result = await handleClearConsole(msg);
+        break;
       case 'list_tabs':
         result = await handleListTabs(msg);
         break;
@@ -191,16 +194,21 @@ async function handleExecuteJs(msg) {
 async function handleReadConsole(msg) {
   const tabId = await resolveTabId(msg.tab_id);
 
-  // Also ask the content script for its buffer (it may have entries not yet forwarded)
+  // Ask the content script for any entries not yet forwarded to the background.
+  // Use the latest ts already buffered as a floor so we don't re-add duplicates.
   try {
+    const existing = consoleBuffers.get(tabId) || [];
+    const latestTs = existing.length ? existing[existing.length - 1].ts : 0;
     const csEntries = await chrome.tabs.sendMessage(tabId, {
       type: 'get_console_buffer',
-      since: msg.since || null,
-      levels: msg.levels || null,
+      since: latestTs || null,
+      levels: null,
     });
     if (Array.isArray(csEntries)) {
       for (const entry of csEntries) {
-        bufferConsoleEntry(tabId, entry);
+        if (entry.ts > latestTs) {
+          bufferConsoleEntry(tabId, entry);
+        }
       }
     }
   } catch {
@@ -227,6 +235,27 @@ async function handleReadConsole(msg) {
   return {
     type: 'read_console_result', msg_id: msg.msg_id, ts: Date.now() / 1000,
     success: true, entries, error: null,
+  };
+}
+
+// --- clear_console ---
+
+async function handleClearConsole(msg) {
+  const tabId = await resolveTabId(msg.tab_id);
+
+  // Clear the service worker buffer for this tab
+  consoleBuffers.delete(tabId);
+
+  // Also tell the content script to clear its buffer
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: 'clear_console_buffer' });
+  } catch {
+    // Content script may not be ready; that is fine
+  }
+
+  return {
+    type: 'clear_console_result', msg_id: msg.msg_id, ts: Date.now() / 1000,
+    success: true, error: null,
   };
 }
 
