@@ -159,13 +159,55 @@ async function resolveTabId(tabId) {
 
 async function handleExecuteJs(msg) {
   const tabId = await resolveTabId(msg.tab_id);
+
+  // Try CDP first (bypasses CSP), fall back to eval if debugger can't attach
+  try {
+    return await executeViaCdp(tabId, msg);
+  } catch (cdpError) {
+    console.warn('[BCB] CDP execution failed, falling back to eval:', cdpError.message);
+    return await executeViaEval(tabId, msg);
+  }
+}
+
+async function executeViaCdp(tabId, msg) {
+  const target = { tabId };
+  try {
+    await chrome.debugger.attach(target, '1.3');
+  } catch (e) {
+    // Another debugger may already be attached — let caller fall back
+    throw new Error(`debugger attach failed: ${e.message}`);
+  }
+  try {
+    const response = await chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
+      expression: msg.code,
+      returnByValue: true,
+      awaitPromise: true,
+    });
+    if (response.exceptionDetails) {
+      const errMsg = response.exceptionDetails.exception?.description
+        || response.exceptionDetails.text
+        || 'Runtime.evaluate exception';
+      return {
+        type: 'execute_js_result', msg_id: msg.msg_id, ts: Date.now() / 1000,
+        success: false, result: null, error: errMsg,
+      };
+    }
+    return {
+      type: 'execute_js_result', msg_id: msg.msg_id, ts: Date.now() / 1000,
+      success: true, result: response.result?.value ?? null, error: null,
+    };
+  } finally {
+    try { await chrome.debugger.detach(target); } catch { /* already detached */ }
+  }
+}
+
+async function executeViaEval(tabId, msg) {
   const results = await chrome.scripting.executeScript({
     target: { tabId },
     func: (codeString) => {
       try {
         // eslint-disable-next-line no-eval
         const rv = eval(codeString);
-        // Attempt JSON-round-trip to ensure serializable
         try { return JSON.parse(JSON.stringify(rv)); } catch { return String(rv); }
       } catch (e) {
         throw e;
@@ -176,7 +218,6 @@ async function handleExecuteJs(msg) {
   });
   const injectionResult = results[0];
   if (injectionResult.error) {
-    // Chrome wraps errors from executeScript
     const errMsg = injectionResult.error.message || JSON.stringify(injectionResult.error);
     return {
       type: 'execute_js_result', msg_id: msg.msg_id, ts: Date.now() / 1000,
