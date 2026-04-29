@@ -70,6 +70,50 @@ class BcbClient:
             {"type": "close_tabs", "tab_ids": list(tab_ids)}, timeout=timeout,
         )
 
+    def move_tabs(self, tab_ids: list[int], index: int,
+                  window_id: int | None = None, timeout: float = 10) -> dict:
+        cmd: dict = {"type": "move_tabs", "tab_ids": list(tab_ids), "index": int(index)}
+        if window_id is not None:
+            cmd["window_id"] = int(window_id)
+        return self.send_command(cmd, timeout=timeout)
+
+    def group_tabs(self, tab_ids: list[int], group_id: int | None = None,
+                   create_window_id: int | None = None, timeout: float = 10) -> dict:
+        cmd: dict = {"type": "group_tabs", "tab_ids": list(tab_ids)}
+        if group_id is not None:
+            cmd["group_id"] = int(group_id)
+        elif create_window_id is not None:
+            cmd["create_properties"] = {"window_id": int(create_window_id)}
+        return self.send_command(cmd, timeout=timeout)
+
+    def ungroup_tabs(self, tab_ids: list[int], timeout: float = 10) -> dict:
+        return self.send_command(
+            {"type": "ungroup_tabs", "tab_ids": list(tab_ids)}, timeout=timeout,
+        )
+
+    def list_tab_groups(self, window_id: int | None = None, timeout: float = 10) -> dict:
+        cmd: dict = {"type": "list_tab_groups"}
+        if window_id is not None:
+            cmd["window_id"] = int(window_id)
+        return self.send_command(cmd, timeout=timeout)
+
+    def update_tab_group(self, group_id: int, title: str | None = None,
+                         color: str | None = None, collapsed: bool | None = None,
+                         timeout: float = 10) -> dict:
+        cmd: dict = {"type": "update_tab_group", "group_id": int(group_id)}
+        if title is not None:
+            cmd["title"] = title
+        if color is not None:
+            cmd["color"] = color
+        if collapsed is not None:
+            cmd["collapsed"] = bool(collapsed)
+        return self.send_command(cmd, timeout=timeout)
+
+    def close_tab_group(self, group_id: int, timeout: float = 10) -> dict:
+        return self.send_command(
+            {"type": "close_tab_group", "group_id": int(group_id)}, timeout=timeout,
+        )
+
     def screenshot(self, tab_id: int | None = None, fmt: str = "png",
                    timeout: float = 10) -> dict:
         return self.send_command(

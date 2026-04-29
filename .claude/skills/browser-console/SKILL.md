@@ -66,6 +66,34 @@ cd ~/code/browser-console-bridge && .venv/bin/python3 -m cli.bcb_close_tabs --id
 
 Exit codes: `0` = all closed, `1` = one or more failed, `2` = communication error.
 
+### Tab Management
+
+Move tabs and manage tab groups end-to-end. All commands print results on stdout, errors on stderr, and use the same exit code convention (`0` success, `1` operation failure, `2` communication error).
+
+```bash
+# Move tabs to a new index (use -1 for end of window). Add --window <id> to move across windows.
+cd ~/code/browser-console-bridge && .venv/bin/python3 -m cli.bcb_move_tabs --index 0 1729111934 1729111935
+
+# Group tabs into a new group (or add to existing group with --group <id>)
+cd ~/code/browser-console-bridge && .venv/bin/python3 -m cli.bcb_group_tabs --ids 1729111934,1729111935
+
+# Add tabs to an existing group
+cd ~/code/browser-console-bridge && .venv/bin/python3 -m cli.bcb_group_tabs --group 7 1729111940
+
+# Ungroup one or more tabs
+cd ~/code/browser-console-bridge && .venv/bin/python3 -m cli.bcb_ungroup_tabs 1729111934 1729111935
+
+# List tab groups (optionally filtered by --window)
+cd ~/code/browser-console-bridge && .venv/bin/python3 -m cli.bcb_list_tab_groups
+
+# Update a tab group's title/color/collapsed state
+# Valid colors: grey, blue, red, yellow, green, pink, purple, cyan, orange
+cd ~/code/browser-console-bridge && .venv/bin/python3 -m cli.bcb_update_tab_group 7 --title "research" --color blue --collapsed
+
+# Close every tab in a group (one round-trip)
+cd ~/code/browser-console-bridge && .venv/bin/python3 -m cli.bcb_close_tab_group 7
+```
+
 ### Execute JavaScript
 
 ```bash

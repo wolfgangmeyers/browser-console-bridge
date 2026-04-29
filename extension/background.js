@@ -128,6 +128,24 @@ async function handleCommand(msg) {
       case 'close_tabs':
         result = await handleCloseTabs(msg);
         break;
+      case 'move_tabs':
+        result = await handleMoveTabs(msg);
+        break;
+      case 'group_tabs':
+        result = await handleGroupTabs(msg);
+        break;
+      case 'ungroup_tabs':
+        result = await handleUngroupTabs(msg);
+        break;
+      case 'list_tab_groups':
+        result = await handleListTabGroups(msg);
+        break;
+      case 'update_tab_group':
+        result = await handleUpdateTabGroup(msg);
+        break;
+      case 'close_tab_group':
+        result = await handleCloseTabGroup(msg);
+        break;
       case 'screenshot':
         result = await handleScreenshot(msg);
         break;
@@ -350,6 +368,332 @@ async function handleCloseTabs(msg) {
     type: 'close_tabs_result', msg_id: msg.msg_id, ts: Date.now() / 1000,
     success: Object.keys(errors).length === 0, closed, errors,
     error: Object.keys(errors).length === 0 ? null : 'one or more tabs failed to close',
+  };
+}
+
+// --- move_tabs ---
+
+async function handleMoveTabs(msg) {
+  const rawIds = Array.isArray(msg.tab_ids) ? msg.tab_ids : [];
+  const errors = {};
+  const parsedIds = [];
+  for (const raw of rawIds) {
+    const id = Number(raw);
+    if (!Number.isFinite(id)) {
+      errors[String(raw)] = 'invalid tab id';
+      continue;
+    }
+    parsedIds.push(id);
+  }
+  const ids = [...new Set(parsedIds)];
+
+  const idx = Number(msg.index);
+  if (!Number.isFinite(idx)) {
+    return {
+      type: 'move_tabs_result', msg_id: msg.msg_id, ts: Date.now() / 1000,
+      success: false, moved: [], errors, error: 'index is required and must be an integer',
+    };
+  }
+  const moveProps = { index: idx };
+  if (msg.window_id != null) {
+    const wid = Number(msg.window_id);
+    if (!Number.isFinite(wid)) {
+      return {
+        type: 'move_tabs_result', msg_id: msg.msg_id, ts: Date.now() / 1000,
+        success: false, moved: [], errors, error: 'invalid window_id',
+      };
+    }
+    moveProps.windowId = wid;
+  }
+
+  // Sequential moves are order-sensitive: each chrome.tabs.move pushes
+  // earlier-moved tabs by one. To make `moved` (and the destination order)
+  // match the caller's input order, iterate in REVERSE for non-negative
+  // indices and FORWARD for the "end of window" sentinel (-1).
+  const moveOrder = idx === -1 ? ids : [...ids].reverse();
+  const movedSet = new Set();
+  for (const id of moveOrder) {
+    try {
+      await chrome.tabs.move(id, moveProps);
+      movedSet.add(id);
+    } catch (e) {
+      errors[String(id)] = e?.message || String(e);
+    }
+  }
+  const moved = ids.filter(id => movedSet.has(id));
+
+  const ok = Object.keys(errors).length === 0;
+  return {
+    type: 'move_tabs_result', msg_id: msg.msg_id, ts: Date.now() / 1000,
+    success: ok, moved, errors,
+    error: ok ? null : 'one or more tabs failed to move',
+  };
+}
+
+// --- group_tabs ---
+
+async function handleGroupTabs(msg) {
+  const rawIds = Array.isArray(msg.tab_ids) ? msg.tab_ids : [];
+  const errors = {};
+  const parsedIds = [];
+  for (const raw of rawIds) {
+    const id = Number(raw);
+    if (!Number.isFinite(id)) {
+      errors[String(raw)] = 'invalid tab id';
+      continue;
+    }
+    parsedIds.push(id);
+  }
+  const ids = [...new Set(parsedIds)];
+  if (!ids.length) {
+    return {
+      type: 'group_tabs_result', msg_id: msg.msg_id, ts: Date.now() / 1000,
+      success: false, group_id: null, grouped: [], errors,
+      error: 'no valid tab ids provided',
+    };
+  }
+  if (msg.group_id != null && msg.create_properties != null) {
+    return {
+      type: 'group_tabs_result', msg_id: msg.msg_id, ts: Date.now() / 1000,
+      success: false, group_id: null, grouped: [], errors,
+      error: 'group_id and create_properties are mutually exclusive',
+    };
+  }
+  const opts = { tabIds: ids };
+  if (msg.group_id != null) {
+    const gid = Number(msg.group_id);
+    if (!Number.isFinite(gid)) {
+      return {
+        type: 'group_tabs_result', msg_id: msg.msg_id, ts: Date.now() / 1000,
+        success: false, group_id: null, grouped: [], errors,
+        error: 'invalid group_id',
+      };
+    }
+    opts.groupId = gid;
+  } else if (msg.create_properties && typeof msg.create_properties === 'object') {
+    const cp = {};
+    if (msg.create_properties.window_id != null) {
+      const wid = Number(msg.create_properties.window_id);
+      if (!Number.isFinite(wid)) {
+        return {
+          type: 'group_tabs_result', msg_id: msg.msg_id, ts: Date.now() / 1000,
+          success: false, group_id: null, grouped: [], errors,
+          error: 'invalid create_properties.window_id',
+        };
+      }
+      cp.windowId = wid;
+    }
+    opts.createProperties = cp;
+  }
+
+  let groupId;
+  try {
+    groupId = await chrome.tabs.group(opts);
+  } catch (e) {
+    return {
+      type: 'group_tabs_result', msg_id: msg.msg_id, ts: Date.now() / 1000,
+      success: false, group_id: null, grouped: [], errors,
+      error: e?.message || String(e),
+    };
+  }
+  // chrome.tabs.group is all-or-nothing — if it resolved, every id in `ids`
+  // was grouped. `errors` only ever contains parse-time (non-numeric) raws.
+  const ok = Object.keys(errors).length === 0;
+  return {
+    type: 'group_tabs_result', msg_id: msg.msg_id, ts: Date.now() / 1000,
+    success: ok, group_id: groupId, grouped: ids, errors,
+    error: ok ? null : 'one or more tab ids were not numeric',
+  };
+}
+
+// --- ungroup_tabs ---
+
+async function handleUngroupTabs(msg) {
+  const rawIds = Array.isArray(msg.tab_ids) ? msg.tab_ids : [];
+  const errors = {};
+  const parsedIds = [];
+  for (const raw of rawIds) {
+    const id = Number(raw);
+    if (!Number.isFinite(id)) {
+      errors[String(raw)] = 'invalid tab id';
+      continue;
+    }
+    parsedIds.push(id);
+  }
+  const ids = [...new Set(parsedIds)];
+  if (!ids.length) {
+    return {
+      type: 'ungroup_tabs_result', msg_id: msg.msg_id, ts: Date.now() / 1000,
+      success: false, ungrouped: [], errors,
+      error: 'no valid tab ids provided',
+    };
+  }
+
+  const ungrouped = [];
+  // chrome.tabs.ungroup is all-or-nothing per call, so call it once per id
+  // to surface partial failure the same way close_tabs does.
+  const settled = await Promise.allSettled(ids.map(id => chrome.tabs.ungroup([id])));
+  settled.forEach((res, i) => {
+    const id = ids[i];
+    if (res.status === 'fulfilled') {
+      ungrouped.push(id);
+    } else {
+      errors[String(id)] = res.reason?.message || String(res.reason);
+    }
+  });
+
+  const ok = Object.keys(errors).length === 0;
+  return {
+    type: 'ungroup_tabs_result', msg_id: msg.msg_id, ts: Date.now() / 1000,
+    success: ok, ungrouped, errors,
+    error: ok ? null : 'one or more tabs failed to ungroup',
+  };
+}
+
+// --- list_tab_groups ---
+
+async function handleListTabGroups(msg) {
+  const query = {};
+  if (msg.window_id != null) {
+    const wid = Number(msg.window_id);
+    if (!Number.isFinite(wid)) {
+      return {
+        type: 'list_tab_groups_result', msg_id: msg.msg_id, ts: Date.now() / 1000,
+        success: false, groups: [], error: 'invalid window_id',
+      };
+    }
+    query.windowId = wid;
+  }
+  let groups;
+  try {
+    groups = await chrome.tabGroups.query(query);
+  } catch (e) {
+    return {
+      type: 'list_tab_groups_result', msg_id: msg.msg_id, ts: Date.now() / 1000,
+      success: false, groups: [], error: e?.message || String(e),
+    };
+  }
+  const out = groups.map(g => ({
+    id: g.id,
+    title: g.title || '',
+    color: g.color,
+    collapsed: g.collapsed,
+    window_id: g.windowId,
+  }));
+  return {
+    type: 'list_tab_groups_result', msg_id: msg.msg_id, ts: Date.now() / 1000,
+    success: true, groups: out, error: null,
+  };
+}
+
+// --- update_tab_group ---
+
+const VALID_TAB_GROUP_COLORS = new Set([
+  'grey', 'blue', 'red', 'yellow', 'green', 'pink', 'purple', 'cyan', 'orange',
+]);
+
+async function handleUpdateTabGroup(msg) {
+  const gid = Number(msg.group_id);
+  if (!Number.isFinite(gid)) {
+    return {
+      type: 'update_tab_group_result', msg_id: msg.msg_id, ts: Date.now() / 1000,
+      success: false, group: null, error: 'invalid group_id',
+    };
+  }
+  const update = {};
+  if (msg.title != null) update.title = String(msg.title);
+  if (msg.color != null) {
+    if (!VALID_TAB_GROUP_COLORS.has(msg.color)) {
+      return {
+        type: 'update_tab_group_result', msg_id: msg.msg_id, ts: Date.now() / 1000,
+        success: false, group: null, error: `invalid color: ${msg.color}`,
+      };
+    }
+    update.color = msg.color;
+  }
+  if (msg.collapsed != null) update.collapsed = Boolean(msg.collapsed);
+
+  let group;
+  try {
+    group = await chrome.tabGroups.update(gid, update);
+  } catch (e) {
+    return {
+      type: 'update_tab_group_result', msg_id: msg.msg_id, ts: Date.now() / 1000,
+      success: false, group: null, error: e?.message || String(e),
+    };
+  }
+  return {
+    type: 'update_tab_group_result', msg_id: msg.msg_id, ts: Date.now() / 1000,
+    success: true,
+    group: {
+      id: group.id,
+      title: group.title || '',
+      color: group.color,
+      collapsed: group.collapsed,
+      window_id: group.windowId,
+    },
+    error: null,
+  };
+}
+
+// --- close_tab_group ---
+
+async function handleCloseTabGroup(msg) {
+  const gid = Number(msg.group_id);
+  if (!Number.isFinite(gid)) {
+    return {
+      type: 'close_tab_group_result', msg_id: msg.msg_id, ts: Date.now() / 1000,
+      success: false, group_id: null, closed: [], errors: {},
+      error: 'invalid group_id',
+    };
+  }
+
+  // Verify the group exists before declaring success on an empty close.
+  // chrome.tabGroups.get throws if no such group exists; treating that as
+  // success would silently mask typo'd group_ids in caller scripts.
+  try {
+    await chrome.tabGroups.get(gid);
+  } catch (e) {
+    return {
+      type: 'close_tab_group_result', msg_id: msg.msg_id, ts: Date.now() / 1000,
+      success: false, group_id: gid, closed: [], errors: {},
+      error: e?.message || `no such group: ${gid}`,
+    };
+  }
+
+  let tabs;
+  try {
+    tabs = await chrome.tabs.query({ groupId: gid });
+  } catch (e) {
+    return {
+      type: 'close_tab_group_result', msg_id: msg.msg_id, ts: Date.now() / 1000,
+      success: false, group_id: gid, closed: [], errors: {},
+      error: e?.message || String(e),
+    };
+  }
+  // Narrow TOCTOU window between get() and query(): if every tab moved out
+  // of the group between the two awaits, Chrome will have auto-deleted it
+  // and we'll see an empty result. We treat that as a successful no-op
+  // since the caller's intent ("group is gone") is satisfied either way.
+  const ids = tabs.map(t => t.id).filter(id => Number.isFinite(id));
+
+  const closed = [];
+  const errors = {};
+  const settled = await Promise.allSettled(ids.map(id => chrome.tabs.remove(id)));
+  settled.forEach((res, i) => {
+    const id = ids[i];
+    if (res.status === 'fulfilled') {
+      closed.push(id);
+    } else {
+      errors[String(id)] = res.reason?.message || String(res.reason);
+    }
+  });
+
+  const ok = Object.keys(errors).length === 0;
+  return {
+    type: 'close_tab_group_result', msg_id: msg.msg_id, ts: Date.now() / 1000,
+    success: ok, group_id: gid, closed, errors,
+    error: ok ? null : 'one or more tabs failed to close',
   };
 }
 
