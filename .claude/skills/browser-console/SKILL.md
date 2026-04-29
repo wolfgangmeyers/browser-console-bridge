@@ -55,6 +55,17 @@ cd ~/code/browser-console-bridge && .venv/bin/python3 -m cli.bcb_tabs
 cd ~/code/browser-console-bridge && .venv/bin/python3 -m cli.bcb_tabs --json
 ```
 
+### Close Tabs
+
+```bash
+# Close one or more tabs by ID (use IDs from bcb_tabs)
+cd ~/code/browser-console-bridge && .venv/bin/python3 -m cli.bcb_close_tabs 1729111934 1729111935
+# Or with --ids
+cd ~/code/browser-console-bridge && .venv/bin/python3 -m cli.bcb_close_tabs --ids 1729111934,1729111935
+```
+
+Exit codes: `0` = all closed, `1` = one or more failed, `2` = communication error.
+
 ### Execute JavaScript
 
 ```bash

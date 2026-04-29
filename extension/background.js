@@ -125,6 +125,9 @@ async function handleCommand(msg) {
       case 'list_tabs':
         result = await handleListTabs(msg);
         break;
+      case 'close_tabs':
+        result = await handleCloseTabs(msg);
+        break;
       case 'screenshot':
         result = await handleScreenshot(msg);
         break;
@@ -313,6 +316,40 @@ async function handleListTabs(msg) {
   return {
     type: 'list_tabs_result', msg_id: msg.msg_id, ts: Date.now() / 1000,
     success: true, tabs: tabList, error: null,
+  };
+}
+
+// --- close_tabs ---
+
+async function handleCloseTabs(msg) {
+  const rawIds = Array.isArray(msg.tab_ids) ? msg.tab_ids : [];
+  const parsedIds = [];
+  const errors = {};
+  for (const raw of rawIds) {
+    const id = Number(raw);
+    if (!Number.isFinite(id)) {
+      errors[String(raw)] = 'invalid tab id';
+      continue;
+    }
+    parsedIds.push(id);
+  }
+  const ids = [...new Set(parsedIds)];
+
+  const closed = [];
+  const settled = await Promise.allSettled(ids.map(id => chrome.tabs.remove(id)));
+  settled.forEach((res, i) => {
+    const id = ids[i];
+    if (res.status === 'fulfilled') {
+      closed.push(id);
+    } else {
+      errors[String(id)] = res.reason?.message || String(res.reason);
+    }
+  });
+
+  return {
+    type: 'close_tabs_result', msg_id: msg.msg_id, ts: Date.now() / 1000,
+    success: Object.keys(errors).length === 0, closed, errors,
+    error: Object.keys(errors).length === 0 ? null : 'one or more tabs failed to close',
   };
 }
 

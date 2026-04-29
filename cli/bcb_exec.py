@@ -11,7 +11,7 @@ import argparse
 import json
 import sys
 
-from .client import BcbClient
+from .client import BcbClient, is_comm_error
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -37,8 +37,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     print(result.get("error", "unknown error"), file=sys.stderr)
-    # Communication-level errors from the server (NO_EXTENSION, TIMEOUT, etc.)
-    if result.get("code") in ("NO_EXTENSION", "TIMEOUT", "INVALID_MESSAGE", "SERVER_ERROR"):
+    if is_comm_error(result):
         return 2
     return 1
 

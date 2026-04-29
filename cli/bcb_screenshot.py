@@ -7,7 +7,7 @@ Usage: bcb-screenshot [--output PATH] [--format png|jpeg] [--tab TAB_ID] [--time
 Exit codes: 0=success, 1=capture error, 2=communication error
 """
 import argparse, base64, os, re, sys, time
-from .client import BcbClient
+from .client import BcbClient, is_comm_error
 
 SCREENSHOT_DIR = os.environ.get("BCB_SCREENSHOT_DIR", "/tmp/bcb-screenshots")
 _UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
@@ -49,7 +49,7 @@ def main(argv: list[str] | None = None) -> int:
         print(str(exc), file=sys.stderr); return 2
     if not result.get("success"):
         print(result.get("error", "unknown error"), file=sys.stderr)
-        return 2 if result.get("code") in ("NO_EXTENSION", "TIMEOUT", "INVALID_MESSAGE", "SERVER_ERROR") else 1
+        return 2 if is_comm_error(result) else 1
     image_data = base64.b64decode(result["image_data"])
     out_path = args.output or os.path.join(SCREENSHOT_DIR, f"{result.get('msg_id', 'screenshot')}.{args.fmt}")
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)

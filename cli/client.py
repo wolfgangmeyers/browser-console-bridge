@@ -1,6 +1,16 @@
 """Shared HTTP client for Browser Console Bridge CLI tools."""
 import json, os, time, urllib.error, urllib.request, uuid
 
+# Server-level error codes that indicate the request never reached the
+# extension (or the server itself failed). CLI tools translate these to
+# exit code 2 (communication error) instead of 1 (operation failed).
+COMM_ERROR_CODES = frozenset({"NO_EXTENSION", "TIMEOUT", "INVALID_MESSAGE", "SERVER_ERROR"})
+
+
+def is_comm_error(result: dict) -> bool:
+    """True if a server response represents a communication-level error."""
+    return result.get("code") in COMM_ERROR_CODES
+
 
 class BcbClient:
     """Thin HTTP client for the BCB server. Stdlib only."""
@@ -54,6 +64,11 @@ class BcbClient:
 
     def list_tabs(self, timeout: float = 10) -> dict:
         return self.send_command({"type": "list_tabs"}, timeout=timeout)
+
+    def close_tabs(self, tab_ids: list[int], timeout: float = 10) -> dict:
+        return self.send_command(
+            {"type": "close_tabs", "tab_ids": list(tab_ids)}, timeout=timeout,
+        )
 
     def screenshot(self, tab_id: int | None = None, fmt: str = "png",
                    timeout: float = 10) -> dict:
