@@ -7,9 +7,9 @@ Execute JavaScript in browser tabs and capture console output, controlled from t
 ### Prerequisites
 
 - Python 3.10+
-- tmux
 - Google Chrome
 - Claude Code (for the skill integration)
+- tmux, only if you use the `bin/bcb-server-*` lifecycle scripts
 
 ### 1. Install Python dependencies
 
@@ -19,27 +19,50 @@ python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
-### 2. Install the Chrome extension
+### 2. Start the bridge server
+
+Start the intermediate server before loading or reloading the Chrome extension. The extension connects to the server when its service worker starts; if the server is not up yet, reload the extension after starting the server.
+
+Managed tmux startup:
+
+```bash
+bash bin/bcb-server-start
+sleep 2
+
+# Verify the HTTP server is running
+curl -sf http://localhost:18080/health | python3 -m json.tool
+```
+
+The managed scripts run the server in a tmux session named `bcb-server`. Use `bin/bcb-server-status`, `bin/bcb-server-stop`, and `bin/bcb-server-restart` to manage it.
+
+Direct foreground startup, without tmux:
+
+```bash
+.venv/bin/python3 server/bridge_server.py
+```
+
+Leave that process running while using the bridge. In another terminal, verify:
+
+```bash
+curl -sf http://localhost:18080/health | python3 -m json.tool
+```
+
+At this point `extension_connected` may still be `false`; that is expected until the extension has loaded and connected.
+
+### 3. Install or reload the Chrome extension
 
 1. Open Chrome and navigate to `chrome://extensions`
 2. Enable **Developer mode** (toggle in the top right)
 3. Click **Load unpacked**
 4. Select the `extension/` directory from this repo
 
-The extension icon should appear in the toolbar. It connects automatically when the server is running.
-
-### 3. Start the server
+If the extension was already installed before the server was running, click the extension's **Reload** button on `chrome://extensions`, or disable and re-enable it. The server must be running when the extension starts so the extension can connect.
 
 ```bash
-bash bin/bcb-server-start
-sleep 2
-
-# Verify it's running and the extension has connected
+# Verify the server is running and the extension has connected
 curl -sf http://localhost:18080/health | python3 -m json.tool
 # Look for: "extension_connected": true
 ```
-
-The server runs in a tmux session named `bcb-server`. Use `bin/bcb-server-stop` and `bin/bcb-server-restart` to manage it.
 
 ### 4. Test it
 
@@ -64,13 +87,13 @@ ln -s "$(pwd)/.claude/skills/browser-console" ~/.claude/skills/browser-console
 
 Then invoke it in Claude Code with `/browser-console`.
 
-**Or use the install skill** to do steps 1–5 automatically. From Claude Code in this repo's directory:
+**Or use the install skill** to do the local setup automatically. From Claude Code in this repo's directory:
 
 ```
 /install
 ```
 
-This sets up the venv, symlinks the skill, and starts the server. Loading the Chrome extension is the one step that must be done manually.
+This sets up the venv, symlinks the skill, and starts the server. Loading or reloading the Chrome extension is the one step that must be done manually, and it should happen after the server is running.
 
 ## How It Works
 
@@ -81,7 +104,7 @@ Claude Code Skill --> CLI Tools --> Python Server <--> Browser Extension --> Bro
 Four small components pass messages along a chain:
 
 1. **Browser Extension** (Chrome, Manifest V3) -- connects to the local server, executes JS in the active tab via `chrome.scripting.executeScript` with `world: 'MAIN'`, captures console output via monkey-patching
-2. **Python Server** -- message broker running in tmux, correlates requests with responses via message IDs, exposes REST API for CLI and WebSocket/polling for the extension
+2. **Python Server** -- message broker, usually managed by tmux but also runnable in the foreground, correlates requests with responses via message IDs, exposes REST API for CLI and WebSocket/polling for the extension
 3. **CLI Tools** -- thin Python scripts (`bcb-exec`, `bcb-console`, `bcb-tabs`) that post commands and block until results arrive, JSON on stdout, errors on stderr
 4. **Claude Code Skill** -- ensures server is running, invokes CLI tools, presents results to the agent
 
@@ -93,7 +116,7 @@ browser-console-bridge/
   extension/                        # Chrome extension (manifest.json, background.js, content.js)
   server/                           # Python HTTP server (message broker)
   cli/                              # CLI tools (stdlib only)
-  bin/                              # Server lifecycle scripts (tmux)
+  bin/                              # Optional tmux-managed server lifecycle scripts
   docs/                             # Design documents
 ```
 
