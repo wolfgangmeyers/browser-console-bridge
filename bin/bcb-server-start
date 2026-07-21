@@ -4,6 +4,7 @@ set -euo pipefail
 SESSION_NAME="bcb-server"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SERVER_SCRIPT="$SCRIPT_DIR/../server/bridge_server.py"
+PYTHON="$SCRIPT_DIR/../.venv/bin/python3"
 
 if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
     echo "Server already running in tmux session '$SESSION_NAME'"
@@ -11,7 +12,7 @@ if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
     exit 0
 fi
 
-tmux new-session -d -s "$SESSION_NAME" "python3 '$SERVER_SCRIPT'"
+tmux new-session -d -s "$SESSION_NAME" "'$PYTHON' '$SERVER_SCRIPT'"
 
 echo "Server started in tmux session '$SESSION_NAME'"
 echo "HTTP API:   http://${BCB_HOST:-127.0.0.1}:${BCB_HTTP_PORT:-18080}"
