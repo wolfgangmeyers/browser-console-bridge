@@ -103,7 +103,7 @@ Claude Code Skill --> CLI Tools --> Python Server <--> Browser Extension --> Bro
 
 Four small components pass messages along a chain:
 
-1. **Browser Extension** (Chrome, Manifest V3) -- connects to the local server, executes JS in the active tab via `chrome.scripting.executeScript` with `world: 'MAIN'`, captures console output via monkey-patching
+1. **Browser Extension** (Chrome, Manifest V3) -- connects to the local server, executes JS via CDP then `userScripts.execute` (USER_SCRIPT world; isolated/MAIN eval last). `userScripts` is required on Slack-style CSP. Console capture via monkey-patching
 2. **Python Server** -- message broker, usually managed by tmux but also runnable in the foreground, correlates requests with responses via message IDs, exposes REST API for CLI and WebSocket/polling for the extension
 3. **CLI Tools** -- thin Python scripts (`bcb-exec`, `bcb-console`, `bcb-tabs`) that post commands and block until results arrive, JSON on stdout, errors on stderr
 4. **Claude Code Skill** -- ensures server is running, invokes CLI tools, presents results to the agent

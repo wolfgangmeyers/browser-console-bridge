@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Browser Console Bridge",
-  "version": "1.0",
+  "version": "1.2",
   "description": "Execute JS in browser tabs and capture console output for CLI tools",
   "minimum_chrome_version": "116",
   "permissions": [
@@ -9,7 +9,8 @@
     "debugger",
     "scripting",
     "tabs",
-    "tabGroups"
+    "tabGroups",
+    "userScripts"
   ],
   "host_permissions": [
     "http://localhost/*",

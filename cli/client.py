@@ -44,10 +44,12 @@ class BcbClient:
         except TimeoutError as exc:
             raise TimeoutError(f"No response within {timeout}s") from exc
 
-    def execute_js(self, code: str, tab_id: int | None = None, timeout: float = 30) -> dict:
-        return self.send_command(
-            {"type": "execute_js", "code": code, "tab_id": tab_id}, timeout=timeout,
-        )
+    def execute_js(self, code: str, tab_id: int | None = None, timeout: float = 30,
+                   world: str | None = None) -> dict:
+        cmd = {"type": "execute_js", "code": code, "tab_id": tab_id}
+        if world is not None:
+            cmd["world"] = world
+        return self.send_command(cmd, timeout=timeout)
 
     def read_console(self, tab_id: int | None = None, since: float | None = None,
                      levels: list[str] | None = None, limit: int = 100,

@@ -111,7 +111,20 @@ items.length;
 
 # With timeout
 cd ~/code/browser-console-bridge && .venv/bin/python3 -m cli.bcb_exec --timeout 60 'heavyComputation()'
+
+# Force user-script world (Slack: page CSP and isolated-world eval both block eval)
+cd ~/code/browser-console-bridge && .venv/bin/python3 -m cli.bcb_exec --world user --tab 1729110643 'document.title'
+
+# Force isolated world (Slack and other pages that block MAIN-world eval)
+cd ~/code/browser-console-bridge && .venv/bin/python3 -m cli.bcb_exec --world isolated --tab 1729110643 'document.title'
+
+# Full result including which world ran (cdp, user, isolated, or main)
+cd ~/code/browser-console-bridge && .venv/bin/python3 -m cli.bcb_exec --json --world user 'document.title'
 ```
+
+`--world` is `auto` (default), `cdp`, `user`, `isolated`, or `main`. Auto tries CDP, then `userScripts` (`USER_SCRIPT` world), then isolated-world eval, then MAIN-world eval. `user` is the Slack path: it is exempt from page CSP and does not use the isolated-world `eval` that Chrome blocks. Isolated shares the DOM and cannot see page JS globals. MAIN-world `eval` is blocked by Slack's `script-src`.
+
+Chrome 138+: after reloading BCB, open the extension details page and enable **Allow User Scripts**. Earlier Chrome: Developer mode on `chrome://extensions` is enough. Without that toggle, `--world user` returns a disabled error.
 
 Exit codes: `0` = success (result on stdout), `1` = JS error (stderr), `2` = communication error (stderr)
 
@@ -181,6 +194,7 @@ cd ~/code/browser-console-bridge && .venv/bin/python3 -m cli.bcb_exec --tab <TAB
 | `NO_EXTENSION` error | Same as above — Chrome needs to be open |
 | `TIMEOUT` | Page may be slow; try `--timeout 60` or simplify the JS |
 | JS error (exit 1) | Fix the JavaScript and retry |
+| Slack / CSP `EvalError` or `success` with `null` | Page blocked MAIN-world eval and isolated-world eval is also blocked by Chrome. Reload BCB 1.2+, enable **Allow User Scripts** on the extension details page, then `--world user` (or default `auto`) |
 | Screenshot captures wrong tab | `--tab` is a no-op for screenshots. Ask the user to make the target tab active, or use `bcb_exec --tab <id>` to read its DOM instead of screenshotting |
 
 ## Environment Variables

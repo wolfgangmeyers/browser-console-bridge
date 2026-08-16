@@ -1,6 +1,8 @@
 // Browser Console Bridge - Content Script (content.js)
 // Runs in ISOLATED world on all pages. Receives console events dispatched by
 // console-capture.js (MAIN world), buffers them, and forwards to service worker.
+// Also evals execute_js in this world so pages that block MAIN-world eval (Slack)
+// can still scrape and interact with the DOM.
 
 const MAX_BUFFER_SIZE = 500;
 const consoleBuffer = [];
@@ -48,7 +50,30 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ cleared: true });
     return false;
   }
+  if (message.type === 'execute_js') {
+    // Isolated-world eval: shares the DOM, ignores page CSP. Used for Slack
+    // and other sites that forbid MAIN-world eval / unsafe-eval.
+    evalAndSerialize(message.code).then(sendResponse);
+    return true;
+  }
 });
+
+async function evalAndSerialize(code) {
+  try {
+    // eslint-disable-next-line no-eval
+    const rv = eval(code);
+    const value = await rv;
+    let result;
+    try {
+      result = JSON.parse(JSON.stringify(value));
+    } catch {
+      result = String(value);
+    }
+    return { ok: true, result };
+  } catch (e) {
+    return { ok: false, error: (e && (e.stack || e.message)) || String(e) };
+  }
+}
 
 // --- Format serialized args into a single content string ---
 

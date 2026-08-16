@@ -27,6 +27,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 chrome.runtime.onInstalled.addListener(() => {
   console.log('[BCB] Extension installed');
   connectWebSocket();
+  ensureUserScriptWorld().catch((e) => {
+    console.warn('[BCB] userScripts world not configured:', e.message);
+  });
 });
 
 chrome.runtime.onStartup.addListener(() => {
@@ -177,17 +180,223 @@ async function resolveTabId(tabId) {
 }
 
 // --- execute_js ---
+//
+// Worlds:
+//   cdp      — page JS via chrome.debugger Runtime.evaluate (bypasses page CSP)
+//   user     — chrome.userScripts.execute in USER_SCRIPT world (one-shot, no register).
+//              Exempt from page CSP. This is the Slack path: MAIN eval is blocked by
+//              Slack, isolated eval is blocked by the extension isolated-world CSP,
+//              and debugger attach fails on this tab ("chrome-extension:// URL of
+//              different extension").
+//   isolated — extension isolated world via content script / executeScript + eval
+//   main     — page JS via executeScript + eval (blocked by Slack-style script-src)
+//   auto     — CDP, then user, then isolated, then MAIN.
+//
+// userScripts.execute does not persist a registration, so it does not leak scripts
+// across calls. Isolated-world window bindings from the *user's* JS can still live
+// until the tab closes.
+
+const VALID_WORLDS = new Set(['auto', 'cdp', 'user', 'isolated', 'main']);
+const USER_SCRIPT_WORLD_CSP = "script-src 'self' 'unsafe-eval' 'unsafe-inline' 'wasm-unsafe-eval'";
+const USER_SCRIPTS_DISABLED_ERROR =
+  "userScripts API disabled. Chrome 138+: open the BCB extension details page and enable Allow User Scripts. Earlier Chrome: enable Developer mode on chrome://extensions, then reload the extension.";
+
+let userWorldReady = false;
 
 async function handleExecuteJs(msg) {
   const tabId = await resolveTabId(msg.tab_id);
+  const world = normalizeWorld(msg.world);
 
-  // Try CDP first (bypasses CSP), fall back to eval if debugger can't attach
-  try {
+  if (world === 'cdp') {
     return await executeViaCdp(tabId, msg);
-  } catch (cdpError) {
-    console.warn('[BCB] CDP execution failed, falling back to eval:', cdpError.message);
-    return await executeViaEval(tabId, msg);
   }
+  if (world === 'user') {
+    return await executeViaUserScript(tabId, msg);
+  }
+  if (world === 'isolated') {
+    return await executeViaIsolated(tabId, msg);
+  }
+  if (world === 'main') {
+    return await executeViaEval(tabId, msg, 'MAIN');
+  }
+
+  try {
+    const cdpResult = await executeViaCdp(tabId, msg);
+    // Attach worked. Keep real JS errors (ReferenceError, etc.). Fall back only
+    // when the page CSP/Trusted Types blocked evaluation.
+    if (cdpResult.success || !isCspEvalError(cdpResult.error)) {
+      return cdpResult;
+    }
+    console.warn('[BCB] CDP blocked by page CSP, falling back to userScripts:', cdpResult.error);
+  } catch (cdpError) {
+    console.warn('[BCB] CDP execution failed, falling back to userScripts:', cdpError.message);
+  }
+
+  let userDisabled = false;
+  try {
+    const userResult = await executeViaUserScript(tabId, msg);
+    if (userResult.success) return userResult;
+    userDisabled = /userScripts API disabled/i.test(userResult.error || '');
+    // Real JS errors stay. Disabled/CSP fall through so MAIN can still work on
+    // pages that allow eval when the userScripts toggle is off.
+    if (!userDisabled && !isCspEvalError(userResult.error)) {
+      return userResult;
+    }
+    console.warn('[BCB] userScripts failed, falling back:', userResult.error);
+  } catch (userError) {
+    console.warn('[BCB] userScripts failed, falling back:', userError.message);
+  }
+
+  try {
+    const isolatedResult = await executeViaIsolated(tabId, msg);
+    if (isolatedResult.success) return isolatedResult;
+    if (!isCspEvalError(isolatedResult.error)) return isolatedResult;
+    console.warn('[BCB] Isolated execution failed, falling back to MAIN eval:', isolatedResult.error);
+  } catch (isolatedError) {
+    console.warn('[BCB] Isolated execution failed, falling back to MAIN eval:', isolatedError.message);
+  }
+
+  const mainResult = await executeViaEval(tabId, msg, 'MAIN');
+  if (mainResult.success || !userDisabled || !isCspEvalError(mainResult.error)) {
+    return mainResult;
+  }
+  // Slack-style wall: isolated and MAIN both blocked eval. The fix is the toggle.
+  return jsResult(msg, {
+    success: false,
+    error: USER_SCRIPTS_DISABLED_ERROR,
+    world: 'user',
+  });
+}
+
+function normalizeWorld(world) {
+  if (world == null || world === '') return 'auto';
+  const normalized = String(world).toLowerCase();
+  if (!VALID_WORLDS.has(normalized)) {
+    throw new Error(`invalid world: ${world} (expected auto, cdp, user, isolated, or main)`);
+  }
+  return normalized;
+}
+
+function isUserScriptsAvailable() {
+  try {
+    if (!chrome.userScripts || typeof chrome.userScripts.execute !== 'function') {
+      return false;
+    }
+    // Sync throw when the permission or Allow User Scripts toggle is off.
+    chrome.userScripts.getScripts();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function ensureUserScriptWorld() {
+  if (userWorldReady) return;
+  if (!isUserScriptsAvailable()) {
+    throw new Error(USER_SCRIPTS_DISABLED_ERROR);
+  }
+  await chrome.userScripts.configureWorld({
+    csp: USER_SCRIPT_WORLD_CSP,
+    messaging: false,
+  });
+  userWorldReady = true;
+}
+
+function wrapUserCode(code) {
+  // USER_SCRIPT world is exempt from the page CSP. We still wrap so statement
+  // lists, promises, and thrown errors match the existing bcb_exec contract.
+  // This eval is in the user-script world, not MAIN, and that world's CSP is
+  // set by configureWorld (unsafe-eval allowed). One-shot execute, no register.
+  return `(async () => {
+    try {
+      const rv = eval(${JSON.stringify(code)});
+      const value = await rv;
+      try { return { ok: true, result: JSON.parse(JSON.stringify(value)) }; }
+      catch { return { ok: true, result: String(value) }; }
+    } catch (e) {
+      return { ok: false, error: (e && (e.stack || e.message)) || String(e) };
+    }
+  })()`;
+}
+
+async function executeViaUserScript(tabId, msg) {
+  if (!isUserScriptsAvailable()) {
+    return jsResult(msg, {
+      success: false,
+      error: USER_SCRIPTS_DISABLED_ERROR,
+      world: 'user',
+    });
+  }
+  try {
+    await ensureUserScriptWorld();
+    const results = await chrome.userScripts.execute({
+      target: { tabId },
+      world: 'USER_SCRIPT',
+      injectImmediately: true,
+      js: [{ code: wrapUserCode(msg.code) }],
+    });
+    const injectionResult = results && results[0];
+    if (!injectionResult) {
+      return jsResult(msg, {
+        success: false,
+        error: 'userScripts.execute returned no result',
+        world: 'user',
+      });
+    }
+    if (injectionResult.error) {
+      return jsResult(msg, {
+        success: false,
+        error: injectionResult.error,
+        world: 'user',
+      });
+    }
+    const payload = injectionResult.result;
+    if (payload && payload.ok === false) {
+      return jsResult(msg, {
+        success: false,
+        error: payload.error || 'user script failed',
+        world: 'user',
+      });
+    }
+    if (payload && payload.ok === true) {
+      return jsResult(msg, {
+        success: true,
+        result: payload.result ?? null,
+        world: 'user',
+      });
+    }
+    let result = injectionResult.result;
+    try {
+      result = JSON.parse(JSON.stringify(result));
+    } catch {
+      result = result == null ? null : String(result);
+    }
+    return jsResult(msg, { success: true, result: result ?? null, world: 'user' });
+  } catch (e) {
+    userWorldReady = false;
+    const err = (e && e.message) || String(e);
+    if (/not enabled|Allow User Scripts|user scripts|must be enabled/i.test(err)) {
+      return jsResult(msg, { success: false, error: USER_SCRIPTS_DISABLED_ERROR, world: 'user' });
+    }
+    return jsResult(msg, { success: false, error: err, world: 'user' });
+  }
+}
+
+function isCspEvalError(errorText) {
+  if (!errorText) return false;
+  return /EvalError|Content Security Policy|unsafe-eval|Trusted Type/i.test(String(errorText));
+}
+
+function jsResult(msg, { success, result = null, error = null, world = null }) {
+  return {
+    type: 'execute_js_result',
+    msg_id: msg.msg_id,
+    ts: Date.now() / 1000,
+    success,
+    result,
+    error,
+    world,
+  };
 }
 
 async function executeViaCdp(tabId, msg) {
@@ -208,47 +417,79 @@ async function executeViaCdp(tabId, msg) {
       const errMsg = response.exceptionDetails.exception?.description
         || response.exceptionDetails.text
         || 'Runtime.evaluate exception';
-      return {
-        type: 'execute_js_result', msg_id: msg.msg_id, ts: Date.now() / 1000,
-        success: false, result: null, error: errMsg,
-      };
+      return jsResult(msg, { success: false, error: errMsg, world: 'cdp' });
     }
-    return {
-      type: 'execute_js_result', msg_id: msg.msg_id, ts: Date.now() / 1000,
-      success: true, result: response.result?.value ?? null, error: null,
-    };
+    return jsResult(msg, {
+      success: true,
+      result: response.result?.value ?? null,
+      world: 'cdp',
+    });
   } finally {
     try { await chrome.debugger.detach(target); } catch { /* already detached */ }
   }
 }
 
-async function executeViaEval(tabId, msg) {
+async function executeViaIsolated(tabId, msg) {
+  // Prefer the already-injected content script (proven to load on Slack).
+  // If this tab has no content script (chrome://, not yet loaded), inject.
+  try {
+    const response = await chrome.tabs.sendMessage(tabId, {
+      type: 'execute_js',
+      code: msg.code,
+    });
+    if (response && response.ok === false) {
+      return jsResult(msg, { success: false, error: response.error || 'isolated eval failed', world: 'isolated' });
+    }
+    if (response && response.ok === true) {
+      return jsResult(msg, { success: true, result: response.result ?? null, world: 'isolated' });
+    }
+  } catch (e) {
+    console.warn('[BCB] Isolated content script missing, injecting:', e.message);
+  }
+  return await executeViaEval(tabId, msg, 'ISOLATED');
+}
+
+async function executeViaEval(tabId, msg, world) {
   const results = await chrome.scripting.executeScript({
     target: { tabId },
-    func: (codeString) => {
+    func: async (codeString) => {
+      // Catch inside the injected function. MAIN-world EvalError from page CSP
+      // becomes an uncaught page exception and used to surface as success+null.
       try {
         // eslint-disable-next-line no-eval
         const rv = eval(codeString);
-        try { return JSON.parse(JSON.stringify(rv)); } catch { return String(rv); }
+        const value = await rv;
+        let result;
+        try {
+          result = JSON.parse(JSON.stringify(value));
+        } catch {
+          result = String(value);
+        }
+        return { ok: true, result };
       } catch (e) {
-        throw e;
+        return {
+          ok: false,
+          error: (e && (e.stack || e.message)) || String(e),
+        };
       }
     },
     args: [msg.code],
-    world: 'MAIN',
+    world,
   });
   const injectionResult = results[0];
+  const worldName = world === 'ISOLATED' ? 'isolated' : 'main';
   if (injectionResult.error) {
     const errMsg = injectionResult.error.message || JSON.stringify(injectionResult.error);
-    return {
-      type: 'execute_js_result', msg_id: msg.msg_id, ts: Date.now() / 1000,
-      success: false, result: null, error: errMsg,
-    };
+    return jsResult(msg, { success: false, error: errMsg, world: worldName });
   }
-  return {
-    type: 'execute_js_result', msg_id: msg.msg_id, ts: Date.now() / 1000,
-    success: true, result: injectionResult.result ?? null, error: null,
-  };
+  const payload = injectionResult.result;
+  if (payload && payload.ok === false) {
+    return jsResult(msg, { success: false, error: payload.error || 'eval failed', world: worldName });
+  }
+  if (payload && payload.ok === true) {
+    return jsResult(msg, { success: true, result: payload.result ?? null, world: worldName });
+  }
+  return jsResult(msg, { success: false, error: 'eval returned no result', world: worldName });
 }
 
 // --- read_console ---
